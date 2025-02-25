@@ -287,3 +287,125 @@ async def get_historical_data(request: HistoricalDataRequest) -> Dict:
             status_code=500,
             detail=f"Error fetching historical data: {str(e)}"
         )
+    
+@app.post("/options/chain")
+async def get_option_chain(request: OptionChainRequest) -> Dict:
+    """
+    Get option chain data for a symbol
+    """
+    if not ib.isConnected():
+        await connect_to_ibkr()
+    
+    try:
+        # Create a stock contract
+        stock = Stock(request.symbol, "SMART", request.currency)
+        qualified = await ib.qualifyContractsAsync(stock)
+        if not qualified:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No contract found for {request.symbol}"
+            )
+        stock = qualified[0]
+        # Get contract details including options
+        chains = await ib.reqSecDefOptParamsAsync(
+            stock.symbol,
+            '',
+            stock.secType,
+            stock.conId
+        )
+        
+        if not chains:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No option chain found for {request.symbol}"
+            )
+        
+        print('chains: ', chains)
+        
+        # Process and format the option chain data
+        filtered_chains = []
+        for chain in chains:
+            # Filter by option type if specified
+            if chain.exchange != request.exchange:
+                continue
+                
+            chain_data = {
+                "exchange": chain.exchange,
+                "strikes": sorted(chain.strikes),
+                "expirations": sorted(chain.expirations),
+                "multiplier": chain.multiplier,
+                "trading_class": chain.tradingClass
+            }
+            filtered_chains.append(chain_data)
+
+        current_bid, current_ask, current_close, current_last = await _get_market_data(request.symbol)
+
+        if not current_bid or not current_ask:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No market data found for {request.symbol}"
+            )
+        
+        near_strikes = [x for x in filtered_chains[0]['strikes'] if abs(x - (current_bid + current_ask) / 2) <= 2.5]
+
+        return {
+            "symbol": request.symbol,
+            "expiration": filtered_chains[0]['expirations'][0],
+            "bid": current_bid,
+            "ask": current_ask,
+            "close": current_close,
+            "last": current_last,
+            "strikes": near_strikes,
+            "multiplier": filtered_chains[0]['multiplier'],
+            "trading_class": filtered_chains[0]['trading_class'],
+            "exchange": filtered_chains[0]['exchange']
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching option chain: {str(e)}"
+        )
+
+async def _get_market_data(symbol: str) -> Tuple[Optional[float], Optional[float]]:
+    """Get market data with proper error handling."""
+    contract = await define_stock_contract(symbol)
+    if not contract:
+        return None, None
+    
+    # Request market data
+    ticker = None
+    try:
+        ticker = ib.reqMktData(contract)
+        for _ in range(20):  # 2 second timeout for market data
+            bid = ticker.bid
+            ask = ticker.ask
+            if bid > 0 and ask > 0:
+                mid_price = (bid + ask) / 2
+                last_market_price = mid_price
+                return bid, ask, ticker.close, ticker.last
+            await asyncio.sleep(0.1)
+        return None, None
+    except Exception as e:
+        print(f"Error fetching market data for {contract}: {str(e)}")
+        return None, None
+    finally:
+        if ticker:
+            try:
+                ib.cancelMktData(contract)
+            except:
+                pass
+
+async def define_stock_contract(symbol: str) -> Optional[Stock]:
+    try:
+        # Create a stock contract
+        contract = Stock(symbol, 'SMART', 'USD')
+        details = await ib.reqContractDetailsAsync(contract)
+        if not details:
+            return None
+        return details[0].contract
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error defining stock contract: {str(e)}"
+        )
