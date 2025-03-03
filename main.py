@@ -1,3 +1,4 @@
+from fastapi.middleware.cors import CORSMiddleware
 from argparse import Action
 from typing import Dict, List, Optional, Tuple, Union
 from fastapi import FastAPI, HTTPException
@@ -10,6 +11,17 @@ from fastapi_utilities import repeat_every, repeat_at
 
 # Initialize FastAPI app
 app = FastAPI(title="IBKR API", description="Interactive Brokers API Integration")
+origins = [
+    "http://localhost",
+    "http://localhost:5173",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize IB instance
 ib = IB()
@@ -94,9 +106,9 @@ def set_target_symbol(symbol: str):
     target_symbol = symbol
 
 @app.get("/status")
-async def get_connection_status() -> Dict[str, bool]:
+async def get_connection_status() -> bool:
     """Get current IBKR connection status"""
-    return {"connected": ib.isConnected()}
+    return ib.isConnected()
 
 @app.post("/connect")
 async def connect_to_ibkr() :
