@@ -421,3 +421,155 @@ async def define_stock_contract(symbol: str) -> Optional[Stock]:
             status_code=500,
             detail=f"Error defining stock contract: {str(e)}"
         )
+    
+@app.post("/options/buy")
+async def buy_option_contract(request: OptionContractRequest) -> Dict:
+    """
+    Buy an option contract (CALL or PUT)
+    """
+    if not ib.isConnected():
+        await connect_to_ibkr()
+    
+    try:
+        # Create and validate option contract
+        contract = Option(
+            symbol=request.symbol,
+            lastTradeDateOrContractMonth=request.expiration_date,
+            strike=request.strike_price,
+            right=request.option_type.value,
+            exchange=request.exchange,
+            currency=request.currency
+        )
+        
+        # Validate and qualify the contract
+        qualified_contract = await validate_option_contract(contract)
+
+        # Create order
+        if request.order_type == OrderType.LIMIT:
+            order = LimitOrder(
+                action=OrderAction.BUY.value,
+                totalQuantity=request.quantity,
+                lmtPrice=request.limit_price
+            )
+        else:
+            order = Order(
+                orderType=OrderType.MARKET.value,
+                action=OrderAction.BUY.value,
+                totalQuantity=request.quantity
+            )
+        
+        # Place the order with qualified contract
+        trade = ib.placeOrder(qualified_contract, order)
+        
+        if not trade:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to place buy order"
+            )
+        
+        # Wait briefly for order to be processed
+        await asyncio.sleep(2)
+        
+        return {
+            "status": "success",
+            "order_id": trade.order.orderId,
+            "contract": {
+                "symbol": qualified_contract.symbol,
+                "option_type": request.option_type,
+                "strike": qualified_contract.strike,
+                "expiration": qualified_contract.lastTradeDateOrContractMonth,
+                "exchange": qualified_contract.exchange,
+                "contract_id": qualified_contract.conId
+            },
+            "order": {
+                "action": OrderAction.BUY,
+                "quantity": request.quantity,
+                "type": request.order_type,
+                "limit_price": request.limit_price if request.order_type == OrderType.LIMIT else None,
+                "status": trade.orderStatus.status
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error placing buy order: {str(e)}"
+        )
+
+@app.post("/options/sell")
+async def sell_option_contract(request: OptionContractRequest) -> Dict:
+    """
+    Sell an option contract (CALL or PUT)
+    """
+    if not ib.isConnected():
+        await connect_to_ibkr()
+    
+    try:
+        # Create and validate option contract
+        contract = Option(
+            symbol=request.symbol,
+            lastTradeDateOrContractMonth=request.expiration_date,
+            strike=request.strike_price,
+            right=request.option_type.value,
+            exchange=request.exchange,
+            currency=request.currency
+        )
+        
+        # Validate and qualify the contract
+        qualified_contract = await validate_option_contract(contract)
+
+        # Create order
+        if request.order_type == OrderType.LIMIT:
+            order = LimitOrder(
+                action=OrderAction.SELL.value,
+                totalQuantity=request.quantity,
+                lmtPrice=request.limit_price
+            )
+        else:
+            order = Order(
+                orderType=OrderType.MARKET.value,
+                action=OrderAction.SELL.value,
+                totalQuantity=request.quantity
+            )
+    
+        # Place the order with qualified contract
+        trade = ib.placeOrder(qualified_contract, order)
+        
+        if not trade:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to place sell order"
+            )
+        
+        # Wait briefly for order to be processed
+        await asyncio.sleep(2)
+        
+        return {
+            "status": "success",
+            "order_id": trade.order.orderId,
+            "contract": {
+                "symbol": qualified_contract.symbol,
+                "option_type": request.option_type,
+                "strike": qualified_contract.strike,
+                "expiration": qualified_contract.lastTradeDateOrContractMonth,
+                "exchange": qualified_contract.exchange,
+                "contract_id": qualified_contract.conId
+            },
+            "order": {
+                "action": OrderAction.SELL,
+                "quantity": request.quantity,
+                "type": request.order_type,
+                "limit_price": request.limit_price if request.order_type == OrderType.LIMIT else None,
+                "status": trade.orderStatus.status
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error placing sell order: {str(e)}"
+        )
